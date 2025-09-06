@@ -40,6 +40,25 @@ export const ResultsPage = ({
   onSave 
 }: ResultsPageProps) => {
   const [suggestions, setSuggestions] = useState<LabelSuggestion[]>([]);
+  const [selectedLabel, setSelectedLabel] = useState<string>(suggestions[0]?.label || "");
+  const [isEditing, setIsEditing] = useState(false);
+  const [customLabel, setCustomLabel] = useState("");
+  const [notes, setNotes] = useState("");
+  const [isProcessing, setIsProcessing] = useState(false);
+
+  // NEW: stats, imageId, embedding
+  type Stats = {
+    embedding_time: number;
+    chroma_time: number;
+    similar_labels: number;
+    top_confidence: number;
+  } | null;
+
+  const [stats, setStats] = useState<Stats>(null);
+  const [imageId, setImageId] = useState<string>("");
+  const [embedding, setEmbedding] = useState<number[]>([]);
+
+  const { toast } = useToast();
 
   useEffect(() => {
     if (suggestions.length > 0) {
@@ -47,57 +66,62 @@ export const ResultsPage = ({
     }
   }, [suggestions]);
   
-useEffect(() => {
-  const fetchSuggestions = async () => {
-    if (imageFile) {
-      const form = new FormData();
-      form.append("file", imageFile);
-      const res = await fetch("http://localhost:8000/upload/image", {
-        method: "POST",
-        body: form,
-      });
-      const data = await res.json();
-      // Adapt backend response into your LabelSuggestion format
-      setSuggestions([
-        {
-          label: data.predicted_label || data.id, // 👈 prefer predicted_label
-          confidence: 1.0,
-          source: "clip",
-          embedding: data.embedding,
-        },
-      ]);
-      
-    } else if (audioBlob) {
-      const form = new FormData();
-      form.append("file", new File([audioBlob], "voice.wav", { type: "audio/wav" }));
-      const res = await fetch("http://localhost:8000/upload/audio", {
-        method: "POST",
-        body: form,
-      });
-      const data = await res.json();
-      setSuggestions([
-        {
-          label: data.is_broken
-            ? `Broken: ${data.broken_words.join(", ")}`
-            : data.summary || data.transcript,
-          confidence: data.avg_confidence,
-          source: "gpt4v",
-        },
-      ]);
-    }
-  };
+  useEffect(() => {
+    const fetchSuggestions = async () => {
+      if (imageFile) {
+        const form = new FormData();
+        form.append("file", imageFile);
+        const res = await fetch("http://localhost:8000/upload/image", {
+          method: "POST",
+          body: form,
+        });
+        const data = await res.json();
 
-  fetchSuggestions();
-}, [imageFile, audioBlob]);
+        // NEW: set stats, imageId, embedding from backend
+        setImageId(data.id);
+        setEmbedding(data.embedding || []);
+        setStats(data.stats || null);
 
-  
-  const [selectedLabel, setSelectedLabel] = useState<string>(suggestions[0]?.label || "");
-  const [isEditing, setIsEditing] = useState(false);
-  const [customLabel, setCustomLabel] = useState("");
-  const [notes, setNotes] = useState("");
-  const [isProcessing, setIsProcessing] = useState(false);
-  
-  const { toast } = useToast();
+        // Adapt backend response into LabelSuggestion format
+        const mapped =
+          (data.suggestions || []).length > 0
+            ? data.suggestions.map((s: any) => ({
+                label: s.label,
+                confidence: s.score ?? 0,
+                source: "clip" as const,
+              }))
+            : [
+                {
+                  label: data.predicted_label || "unknown",
+                  confidence: 1.0,
+                  source: "chromadb" as const,
+                  embedding: data.embedding,
+                },
+              ];
+        setSuggestions(mapped);
+
+      } else if (audioBlob) {
+        const form = new FormData();
+        form.append("file", new File([audioBlob], "voice.wav", { type: "audio/wav" }));
+        const res = await fetch("http://localhost:8000/upload/audio", {
+          method: "POST",
+          body: form,
+        });
+        const data = await res.json();
+        setSuggestions([
+          {
+            label: data.is_broken
+              ? `Broken: ${data.broken_words.join(", ")}`
+              : data.summary || data.transcript,
+            confidence: data.avg_confidence,
+            source: "gpt4v",
+          },
+        ]);
+      }
+    };
+
+    fetchSuggestions();
+  }, [imageFile, audioBlob]);
 
   const handleAcceptSuggestion = (label: string) => {
     setSelectedLabel(label);
@@ -124,15 +148,12 @@ useEffect(() => {
   
     setIsProcessing(true);
   
-    // Find embedding from suggestions
-    const embedding = suggestions.find(s => s.embedding)?.embedding || [];
-  
-    // Call backend /confirm
+    // Call backend /confirm with real id + embedding
     await fetch("http://localhost:8000/confirm", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        image_id: crypto.randomUUID(), // or use backend ID if returned
+        image_id: imageId || crypto.randomUUID(),
         label: selectedLabel,
         embedding,
       }),
@@ -150,7 +171,8 @@ useEffect(() => {
       timestamp: new Date().toISOString(),
       filename: imageFile?.name || "audio_input",
       confidence:
-        suggestions.find((s) => s.label === selectedLabel)?.confidence || 1.0,
+        suggestions.find((s) => s.label === selectedLabel)?.confidence ??
+        (stats?.top_confidence ?? 1.0),
       notes: notes.trim(),
       hasAudio: !!audioBlob,
       hasImage: !!imageFile,
@@ -158,7 +180,6 @@ useEffect(() => {
     onSave(selectedLabel, metadata);
   };
   
-
   const getSourceColor = (source: string) => {
     switch (source) {
       case 'chromadb': return 'bg-primary/20 text-primary';
@@ -251,31 +272,26 @@ useEffect(() => {
             <Card className="bg-gradient-card border-border/50 backdrop-blur-sm animate-scale-in">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <Clock className="w-5 h-5 text-purple-400" />
+                  <Clock className="w-5 h-5 text-primary" />
                   Processing Stats
                 </CardTitle>
               </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div>
-                    <p className="text-muted-foreground">Embedding Time</p>
-                    <p className="font-semibold">0.3s</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground">ChromaDB Search</p>
-                    <p className="font-semibold">0.1s</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground">Similar Labels</p>
-                    <p className="font-semibold">{suggestions.length}</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground">Top Confidence</p>
-                    <p className="font-semibold">
-  {suggestions.length > 0 ? `${(suggestions[0].confidence * 100).toFixed(0)}%` : "N/A"}
-</p>
-
-                  </div>
+              <CardContent className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <div className="text-muted-foreground">Embedding Time</div>
+                  <div className="font-medium">{stats ? `${stats.embedding_time.toFixed(3)}s` : "—"}</div>
+                </div>
+                <div>
+                  <div className="text-muted-foreground">ChromaDB Search</div>
+                  <div className="font-medium">{stats ? `${stats.chroma_time.toFixed(3)}s` : "—"}</div>
+                </div>
+                <div>
+                  <div className="text-muted-foreground">Similar Labels</div>
+                  <div className="font-medium">{stats ? stats.similar_labels : "—"}</div>
+                </div>
+                <div>
+                  <div className="text-muted-foreground">Top Confidence</div>
+                  <div className="font-medium">{stats ? `${(stats.top_confidence * 100).toFixed(1)}%` : "—"}</div>
                 </div>
               </CardContent>
             </Card>
@@ -410,35 +426,35 @@ useEffect(() => {
                     <Check className="w-5 h-5 text-primary" />
                   </div>
                   <div className="flex gap-3 mt-6">
-                  <div className="mt-6 flex gap-4 justify-end">
-  {/* Save Button */}
-  <button
-    onClick={handleSave}
-    className="bg-gradient-to-r from-purple-600 to-blue-500 text-white px-4 py-2 rounded-lg"
-  >
-    Save to Dataset
-  </button>
+                    <div className="mt-6 flex gap-4 justify-end">
+                      {/* Save Button */}
+                      <button
+                        onClick={handleSave}
+                        className="bg-gradient-to-r from-purple-600 to-blue-500 text-white px-4 py-2 rounded-lg"
+                      >
+                        Save to Dataset
+                      </button>
 
-  {/* Download JSON */}
-  <a
-    href="http://localhost:8000/dataset/download/json"
-    target="_blank"
-    rel="noopener noreferrer"
-    className="bg-blue-600 text-white px-4 py-2 rounded-lg"
-  >
-    Download JSON
-  </a>
+                      {/* Download JSON */}
+                      <a
+                        href="http://localhost:8000/dataset/download/json"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="bg-blue-600 text-white px-4 py-2 rounded-lg"
+                      >
+                        Download JSON
+                      </a>
 
-  {/* Download CSV */}
-  <a
-    href="http://localhost:8000/dataset/download/csv"
-    target="_blank"
-    rel="noopener noreferrer"
-    className="bg-green-600 text-white px-4 py-2 rounded-lg"
-  >
-    Download CSV
-  </a>
-</div>
+                      {/* Download CSV */}
+                      <a
+                        href="http://localhost:8000/dataset/download/csv"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="bg-green-600 text-white px-4 py-2 rounded-lg"
+                      >
+                        Download CSV
+                      </a>
+                    </div>
 
                     <Button 
                       variant="outline"
