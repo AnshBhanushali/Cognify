@@ -8,9 +8,10 @@ interface UploadInterfaceProps {
   onImageUpload: (file: File) => void;
   onAudioUpload: (blob: Blob) => void;
   onNext: () => void;
+  onBack: () => void;
 }
 
-export const UploadInterface = ({ onImageUpload, onAudioUpload, onNext }: UploadInterfaceProps) => {
+export const UploadInterface = ({ onImageUpload, onAudioUpload, onNext, onBack}: UploadInterfaceProps) => {
   const [uploadedImage, setUploadedImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
@@ -304,8 +305,19 @@ export const UploadInterface = ({ onImageUpload, onAudioUpload, onNext }: Upload
         </div>
 
         {/* Continue Button */}
-        {(uploadedImage || audioBlob) && (
-          <div className="text-center animate-scale-in">
+        
+                {/* Continue + Back Buttons */}
+                <div className="text-center flex justify-center gap-4 animate-scale-in">
+          <Button
+            onClick={onBack}
+            variant="outline"
+            size="lg"
+            className="px-8 py-3"
+          >
+            ← Back
+          </Button>
+
+          {(uploadedImage || audioBlob) && (
             <Button
               onClick={onNext}
               size="lg"
@@ -313,8 +325,8 @@ export const UploadInterface = ({ onImageUpload, onAudioUpload, onNext }: Upload
             >
               Process with AI →
             </Button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </div>
   );
