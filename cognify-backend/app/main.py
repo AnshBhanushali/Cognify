@@ -2,6 +2,7 @@ import os
 import uuid
 import datetime
 from typing import List
+from pydantic import BaseModel
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,6 +23,11 @@ from app.models.audio_transcriber import (
 from app.db import save_image_record, save_audio_record
 import io
 import csv
+
+class ConfirmRequest(BaseModel):
+    image_id: str
+    label: str
+    embedding: List[float]
 
 # --------- paths ----------
 BASE_DIR = os.path.dirname(__file__)
@@ -55,6 +61,8 @@ def _now_iso() -> str:
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
 
 
 # --------- Image: upload -> embedding + label ----------
@@ -94,9 +102,9 @@ async def upload_image(file: UploadFile = File(...), include_embedding: bool = T
 
 # --------- Image: confirm -> save to Chroma ----------
 @app.post("/confirm")
-async def confirm(image_id: str, label: str, embedding: List[float]):
-    save_label_to_chroma(image_id, label, embedding)
-    return {"ok": True, "saved_label": label}
+async def confirm(req: ConfirmRequest):
+    save_label_to_chroma(req.image_id, req.label, req.embedding)
+    return {"ok": True, "saved_label": req.label}
 
 
 # --------- Dataset: list saved labels ----------
