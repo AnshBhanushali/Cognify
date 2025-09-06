@@ -6,7 +6,8 @@ from typing import List
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
+from pydantic import BaseModel
 
 from app.schemas import ImageProcessResponse, AudioProcessResponse
 from app.models.image_embedder import (
@@ -19,7 +20,11 @@ from app.models.audio_transcriber import (
     transcribe_with_conf,
     detect_broken_words,
     summarize_transcript_simple,
+    denoise_audio,
+    audio_embedding_mfcc,
+    diarize_energy_fallback,
 )
+from app.models.audio_memory import save_audio_label_to_chroma, query_audio_label
 from app.db import save_image_record, save_audio_record
 import io
 import csv
@@ -66,7 +71,6 @@ async def upload_image(file: UploadFile = File(...), include_embedding: bool = T
     if not (file.content_type or "").startswith("image/"):
         raise HTTPException(status_code=400, detail="Please upload an image file")
 
-    # Save image locally
     uid = str(uuid.uuid4())
     ext = os.path.splitext(file.filename)[1] or ".png"
     safe_name = f"{uid}{ext}"
@@ -76,22 +80,17 @@ async def upload_image(file: UploadFile = File(...), include_embedding: bool = T
 
     ts = _now_iso()
 
-    # --- Measure embedding time ---
+    # timings
     t0 = time.perf_counter()
     embedding = image_to_embedding(dest_path)
+    embedding_time = round(time.perf_counter() - t0, 3)
+
     t1 = time.perf_counter()
-    embedding_time = round(t1 - t0, 3)
-
-    # --- Measure Chroma search time ---
-    t2 = time.perf_counter()
     predicted_label, suggestions = generate_detailed_label(dest_path, embedding)
-    t3 = time.perf_counter()
-    chroma_time = round(t3 - t2, 3)
+    chroma_time = round(time.perf_counter() - t1, 3)
 
-    # Persist record in db (optional)
     save_image_record(uid, file.filename, ts, embedding)
 
-    # Pick top confidence if available
     top_conf = suggestions[0]["score"] if suggestions else 1.0
 
     return {
@@ -111,42 +110,46 @@ async def upload_image(file: UploadFile = File(...), include_embedding: bool = T
     }
 
 
-# --------- Image: confirm -> save to Chroma ----------
+# --------- Image: confirm ----------
 @app.post("/confirm")
 async def confirm(image_id: str, label: str, embedding: List[float]):
     save_label_to_chroma(image_id, label, embedding)
     return {"ok": True, "saved_label": label}
 
 
-# --------- Dataset: list saved labels ----------
+# --------- Dataset: list ----------
 @app.get("/dataset")
 async def list_dataset(limit: int = 50):
     results = collection.get()
     data = []
     for i, doc in enumerate(results["documents"]):
-        data.append({
-            "id": results["ids"][i],
-            "label": doc,
-            "metadata": results["metadatas"][i],
-        })
+        data.append(
+            {
+                "id": results["ids"][i],
+                "label": doc,
+                "metadata": results["metadatas"][i],
+            }
+        )
     return {"count": len(data), "items": data[:limit]}
 
 
-# --------- Dataset: download as JSON ----------
+# --------- Dataset: download JSON ----------
 @app.get("/dataset/download/json")
 async def download_dataset_json():
     results = collection.get()
     data = []
     for i, doc in enumerate(results["documents"]):
-        data.append({
-            "id": results["ids"][i],
-            "label": doc,
-            "metadata": results["metadatas"][i],
-        })
+        data.append(
+            {
+                "id": results["ids"][i],
+                "label": doc,
+                "metadata": results["metadatas"][i],
+            }
+        )
     return JSONResponse(content=data)
 
 
-# --------- Dataset: download as CSV ----------
+# --------- Dataset: download CSV ----------
 @app.get("/dataset/download/csv")
 async def download_dataset_csv():
     results = collection.get()
@@ -165,8 +168,8 @@ async def download_dataset_csv():
     )
 
 
-# --------- Audio: upload -> transcript + broken detection ----------
-@app.post("/upload/audio", response_model=AudioProcessResponse)
+# --------- Audio: upload -> transcript + extras ----------
+@app.post("/upload/audio")
 async def upload_audio(file: UploadFile = File(...), summarize_if_clean: bool = True):
     if not file.filename:
         raise HTTPException(status_code=400, detail="No filename provided")
@@ -180,31 +183,75 @@ async def upload_audio(file: UploadFile = File(...), summarize_if_clean: bool = 
     with open(dest_path, "wb") as f:
         f.write(await file.read())
 
-    transcript, avg_conf, word_probs, duration = transcribe_with_conf(dest_path)
-    broken_words = detect_broken_words(word_probs, prob_threshold=0.55)
+    transcript, avg_conf, words, duration, segs = transcribe_with_conf(dest_path)
+    broken_words, broken_spans = detect_broken_words(words, prob_threshold=0.55)
 
-    # Heuristic: mark audio as "broken" if enough uncertain tokens OR very low avg confidence
     is_broken = (avg_conf < 0.45) or (
-        len(word_probs) > 0 and (len(broken_words) / max(1, len(word_probs)) > 0.20)
+        len(words) > 0 and (len(broken_words) / max(1, len(words)) > 0.20)
     )
 
     summary = None
     if summarize_if_clean and not is_broken:
         summary = summarize_transcript_simple(transcript, max_words=24)
 
-    ts = _now_iso()
-    save_audio_record(
-        uid, file.filename, ts, duration, transcript, avg_conf, is_broken, broken_words
-    )
+    diarization = diarize_energy_fallback(dest_path)
 
-    return AudioProcessResponse(
-        id=uid,
-        filename=file.filename,
-        timestamp=ts,
-        duration_sec=duration,
-        transcript=transcript,
-        avg_confidence=avg_conf,
-        is_broken=is_broken,
-        broken_words=broken_words,
-        summary=summary,
-    )
+    ts = _now_iso()
+    save_audio_record(uid, file.filename, ts, duration, transcript, avg_conf, is_broken, broken_words)
+
+    embedding = audio_embedding_mfcc(dest_path)
+
+    retrieval = query_audio_label(embedding, n_results=1)
+    retrieved_label = None
+    if retrieval and retrieval.get("documents") and retrieval["documents"][0]:
+        retrieved_label = retrieval["documents"][0][0]
+
+    return {
+        "id": uid,
+        "filename": file.filename,
+        "timestamp": ts,
+        "duration_sec": duration,
+        "transcript": transcript,
+        "avg_confidence": avg_conf,
+        "is_broken": is_broken,
+        "broken_words": broken_words,
+        "summary": summary,
+        "words": words,
+        "segments": segs,
+        "broken_spans": broken_spans,
+        "diarization": diarization,
+        "audio_embedding": embedding,
+        "retrieved_label": retrieved_label,
+    }
+
+
+# --------- Audio: confirm ----------
+class ConfirmAudioReq(BaseModel):
+    audio_id: str
+    label: str
+    embedding: List[float]
+
+
+@app.post("/confirm_audio")
+async def confirm_audio(req: ConfirmAudioReq):
+    save_audio_label_to_chroma(req.audio_id, req.label, req.embedding)
+    return {"ok": True, "saved_label": req.label}
+
+
+# --------- Audio: repair (denoise) ----------
+@app.get("/audio/{audio_id}/repair")
+async def repair_audio(audio_id: str):
+    matches = [fn for fn in os.listdir(AUD_DIR) if fn.startswith(audio_id)]
+    if not matches:
+        raise HTTPException(status_code=404, detail="audio not found")
+    src = os.path.join(AUD_DIR, matches[0])
+
+    out_name = f"{audio_id}_denoised.wav"
+    out_path = os.path.join(AUD_DIR, out_name)
+    meta = denoise_audio(src, out_path)
+
+    headers = {
+        "X-SNR-Before": str(round(meta.get("snr_before", 0.0), 2)),
+        "X-SNR-After": str(round(meta.get("snr_after", 0.0), 2)),
+    }
+    return FileResponse(out_path, media_type="audio/wav", filename=out_name, headers=headers)
