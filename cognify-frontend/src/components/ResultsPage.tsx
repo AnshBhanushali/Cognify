@@ -86,68 +86,74 @@ useEffect(() => {
 }, [imageFile]);
 
   
-  useEffect(() => {
-    const fetchSuggestions = async () => {
-      if (imageFile) {
-        const form = new FormData();
-        form.append("file", imageFile);
-        const res = await fetch("http://localhost:8000/upload/image", {
-          method: "POST",
-          body: form,
-        });
-        const data = await res.json();
+useEffect(() => {
+  const fetchSuggestions = async () => {
+    if (imageFile && !audioBlob) {
+      // IMAGE MODE
+      const form = new FormData();
+      form.append("file", imageFile);
+      const res = await fetch("http://localhost:8000/upload/image", {
+        method: "POST",
+        body: form,
+      });
+      const data = await res.json();
 
-        setImageId(data.id);
-        setEmbedding(data.embedding || []);
-        setStats(data.stats || null);
+      setImageId(data.id);
+      setEmbedding(data.embedding || []);
+      setStats(data.stats || null);
 
-        const mapped =
-          (data.suggestions || []).length > 0
-            ? data.suggestions.map((s: any) => ({
-                label: s.label,
-                confidence: s.score ?? 0,
-                source: "clip" as const,
-              }))
-            : [
-                {
-                  label: data.predicted_label || "unknown",
-                  confidence: 1.0,
-                  source: "chromadb" as const,
-                  embedding: data.embedding,
-                },
-              ];
-        setSuggestions(mapped);
+      const mapped =
+        (data.suggestions || []).length > 0
+          ? data.suggestions.map((s: any) => ({
+              label: s.label,
+              confidence: s.score ?? 0,
+              source: "clip" as const,
+            }))
+          : [
+              {
+                label: data.predicted_label || "unknown",
+                confidence: 1.0,
+                source: "chromadb" as const,
+                embedding: data.embedding,
+              },
+            ];
+      setSuggestions(mapped);
 
-      } else if (audioBlob) {
-        const form = new FormData();
-        form.append("file", new File([audioBlob], "voice.wav", { type: "audio/wav" }));
-        const res = await fetch("http://localhost:8000/upload/audio", {
-          method: "POST",
-          body: form,
-        });
-        const data = await res.json();
+    } else if (audioBlob && !imageFile) {
+      // AUDIO MODE
+      const form = new FormData();
+      form.append("file", new File([audioBlob], "voice.wav", { type: "audio/wav" }));
+      const res = await fetch("http://localhost:8000/upload/audio", {
+        method: "POST",
+        body: form,
+      });
+      const data = await res.json();
 
-        setAudioId(data.id);
-        setAudioEmbedding(data.audio_embedding || []);
-        setTranscript(data.transcript || "");
-        setBrokenWords(data.broken_words || []);
-        setDiarization(data.diarization || []);
-        setRetrievedLabel(data.retrieved_label || null);
+      setAudioId(data.id);
+      setAudioEmbedding(data.audio_embedding || []);
+      setTranscript(data.transcript || "");
+      setBrokenWords(data.broken_words || []);
+      setDiarization(data.diarization || []);
+      setRetrievedLabel(data.retrieved_label || null);
 
-        setSuggestions([
-          {
-            label: data.is_broken
-              ? `Broken: ${data.broken_words.join(", ")}`
-              : data.summary || data.transcript,
-            confidence: data.avg_confidence,
-            source: "gpt4v",
-          },
-        ]);
-      }
-    };
+      setSuggestions([
+        {
+          label: data.is_broken
+            ? `Broken: ${data.broken_words.join(", ")}`
+            : data.summary || data.transcript,
+          confidence: data.avg_confidence,
+          source: "gpt4v",
+        },
+      ]);
+    } else {
+      // reset if neither
+      setSuggestions([]);
+    }
+  };
 
-    fetchSuggestions();
-  }, [imageFile, audioBlob]);
+  fetchSuggestions();
+}, [imageFile, audioBlob]);
+
 
   const handleAcceptSuggestion = (label: string) => {
     setSelectedLabel(label);
@@ -233,6 +239,7 @@ useEffect(() => {
       default: return '📊';
     }
   };
+  
 
   return (
     <div className="min-h-screen bg-gradient-hero p-6">

@@ -41,16 +41,23 @@ const AppRoutes = ({
 
       {/* Upload Screen */}
       <Route
-        path="/upload"
-        element={
-          <UploadInterface
-            onImageUpload={setImageFile}
-            onAudioUpload={setAudioBlob}
-            onNext={() => navigate("/results")}   // ✅ forward
-            onBack={() => navigate("/loading")}   // ✅ explicit back
-          />
-        }
-      />
+  path="/upload"
+  element={
+    <UploadInterface
+      onImageUpload={(file) => {
+        setImageFile(file);
+        setAudioBlob(null); // reset audio
+      }}
+      onAudioUpload={(blob) => {
+        setAudioBlob(blob);
+        setImageFile(null); // reset image
+      }}
+      onNext={() => navigate("/results")}
+      onBack={() => navigate("/loading")}
+    />
+  }
+/>
+
 
       {/* Results Screen */}
       <Route
