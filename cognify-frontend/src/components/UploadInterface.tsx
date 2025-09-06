@@ -16,13 +16,14 @@ export const UploadInterface = ({ onImageUpload, onAudioUpload, onNext }: Upload
   const [isRecording, setIsRecording] = useState(false);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [dragActive, setDragActive] = useState(false);
-  
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
-  
+
   const { toast } = useToast();
 
+  // --------- Drag & Drop ----------
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -37,12 +38,13 @@ export const UploadInterface = ({ onImageUpload, onAudioUpload, onNext }: Upload
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
-    
+
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       handleFileUpload(e.dataTransfer.files[0]);
     }
   }, []);
 
+  // --------- Image Upload ----------
   const handleFileUpload = async (file: File) => {
     if (!file.type.startsWith("image/")) {
       toast({
@@ -52,14 +54,14 @@ export const UploadInterface = ({ onImageUpload, onAudioUpload, onNext }: Upload
       });
       return;
     }
-  
+
     // Preview
     const reader = new FileReader();
     reader.onload = (e) => setImagePreview(e.target?.result as string);
     reader.readAsDataURL(file);
-  
+
     setUploadedImage(file);
-  
+
     // ✅ send to backend
     const formData = new FormData();
     formData.append("file", file);
@@ -68,28 +70,30 @@ export const UploadInterface = ({ onImageUpload, onAudioUpload, onNext }: Upload
       body: formData,
     });
     const data = await res.json();
-  
+
     console.log("Image backend response:", data);
     onImageUpload(file);
   };
-  
 
+  // --------- Audio Recording ----------
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mediaRecorder = new MediaRecorder(stream);
-      
+
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
-      
+
       mediaRecorder.ondataavailable = (event) => {
-        audioChunksRef.current.push(event.data);
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
       };
-      
+
       mediaRecorder.onstop = async () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: "audio/wav" });
         setAudioBlob(audioBlob);
-      
+
         // ✅ send to backend
         const formData = new FormData();
         formData.append("file", new File([audioBlob], "recording.wav", { type: "audio/wav" }));
@@ -98,13 +102,17 @@ export const UploadInterface = ({ onImageUpload, onAudioUpload, onNext }: Upload
           body: formData,
         });
         const data = await res.json();
-      
+
         console.log("Audio backend response:", data);
         onAudioUpload(audioBlob);
+
+        // stop mic
         stream.getTracks().forEach((track) => track.stop());
       };
-      
-      
+
+      mediaRecorder.start();
+      setIsRecording(true);
+
       toast({
         title: "Recording started",
         description: "Speak your labeling instructions",
@@ -122,7 +130,7 @@ export const UploadInterface = ({ onImageUpload, onAudioUpload, onNext }: Upload
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
-      
+
       toast({
         title: "Recording completed",
         description: "Audio captured successfully",
@@ -130,11 +138,12 @@ export const UploadInterface = ({ onImageUpload, onAudioUpload, onNext }: Upload
     }
   };
 
+  // --------- Clear ---------
   const clearImage = () => {
     setUploadedImage(null);
     setImagePreview(null);
     if (fileInputRef.current) {
-      fileInputRef.current.value = '';
+      fileInputRef.current.value = "";
     }
   };
 
@@ -162,12 +171,12 @@ export const UploadInterface = ({ onImageUpload, onAudioUpload, onNext }: Upload
                 <ImageIcon className="w-6 h-6 text-primary" />
                 Image Upload
               </h2>
-              
+
               <div
                 className={`border-2 border-dashed rounded-lg p-8 text-center transition-all duration-300 ${
-                  dragActive 
-                    ? 'border-primary bg-primary/10' 
-                    : 'border-border hover:border-primary/50'
+                  dragActive
+                    ? "border-primary bg-primary/10"
+                    : "border-border hover:border-primary/50"
                 }`}
                 onDragEnter={handleDrag}
                 onDragLeave={handleDrag}
@@ -176,15 +185,15 @@ export const UploadInterface = ({ onImageUpload, onAudioUpload, onNext }: Upload
               >
                 {imagePreview ? (
                   <div className="space-y-4">
-                    <img 
-                      src={imagePreview} 
-                      alt="Preview" 
+                    <img
+                      src={imagePreview}
+                      alt="Preview"
                       className="max-w-full h-48 object-contain mx-auto rounded-lg"
                     />
                     <div className="flex gap-2 justify-center">
-                      <Button 
-                        variant="outline" 
-                        size="sm" 
+                      <Button
+                        variant="outline"
+                        size="sm"
                         onClick={clearImage}
                         className="flex items-center gap-2"
                       >
@@ -198,10 +207,8 @@ export const UploadInterface = ({ onImageUpload, onAudioUpload, onNext }: Upload
                     <Upload className="w-12 h-12 text-muted-foreground mx-auto" />
                     <div>
                       <p className="text-lg font-medium mb-2">Drop your image here</p>
-                      <p className="text-sm text-muted-foreground mb-4">
-                        or click to browse files
-                      </p>
-                      <Button 
+                      <p className="text-sm text-muted-foreground mb-4">or click to browse files</p>
+                      <Button
                         onClick={() => fileInputRef.current?.click()}
                         className="bg-gradient-primary hover:shadow-glow transition-all duration-300"
                       >
@@ -211,7 +218,7 @@ export const UploadInterface = ({ onImageUpload, onAudioUpload, onNext }: Upload
                   </div>
                 )}
               </div>
-              
+
               <input
                 ref={fileInputRef}
                 type="file"
@@ -229,7 +236,7 @@ export const UploadInterface = ({ onImageUpload, onAudioUpload, onNext }: Upload
                 <Mic className="w-6 h-6 text-accent" />
                 Voice Instructions
               </h2>
-              
+
               <div className="text-center space-y-6">
                 <div className="bg-muted/30 rounded-lg p-6">
                   {isRecording ? (
@@ -248,9 +255,10 @@ export const UploadInterface = ({ onImageUpload, onAudioUpload, onNext }: Upload
                         <div className="w-8 h-8 bg-green-500 rounded-full" />
                       </div>
                       <p className="text-lg font-medium">Recording captured</p>
-                      <Button 
-                        variant="outline" 
-                        size="sm" 
+                      <audio controls src={URL.createObjectURL(audioBlob)} className="mx-auto" />
+                      <Button
+                        variant="outline"
+                        size="sm"
                         onClick={clearAudio}
                         className="flex items-center gap-2"
                       >
@@ -268,14 +276,14 @@ export const UploadInterface = ({ onImageUpload, onAudioUpload, onNext }: Upload
                     </div>
                   )}
                 </div>
-                
+
                 <Button
                   onClick={isRecording ? stopRecording : startRecording}
                   size="lg"
                   className={`transition-all duration-300 ${
-                    isRecording 
-                      ? 'bg-red-500 hover:bg-red-600' 
-                      : 'bg-gradient-primary hover:shadow-glow'
+                    isRecording
+                      ? "bg-red-500 hover:bg-red-600"
+                      : "bg-gradient-primary hover:shadow-glow"
                   }`}
                 >
                   {isRecording ? (
@@ -298,7 +306,7 @@ export const UploadInterface = ({ onImageUpload, onAudioUpload, onNext }: Upload
         {/* Continue Button */}
         {(uploadedImage || audioBlob) && (
           <div className="text-center animate-scale-in">
-            <Button 
+            <Button
               onClick={onNext}
               size="lg"
               className="bg-gradient-primary hover:shadow-glow transition-all duration-300 text-lg px-8 py-3"
