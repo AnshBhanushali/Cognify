@@ -13,7 +13,6 @@ import {
   Clock, 
   Target,
   ChevronLeft,
-  Download
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -46,7 +45,7 @@ export const ResultsPage = ({
   const [notes, setNotes] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // NEW: stats, imageId, embedding
+  // Stats + IDs + embeddings
   type Stats = {
     embedding_time: number;
     chroma_time: number;
@@ -57,6 +56,14 @@ export const ResultsPage = ({
   const [stats, setStats] = useState<Stats>(null);
   const [imageId, setImageId] = useState<string>("");
   const [embedding, setEmbedding] = useState<number[]>([]);
+
+  // Audio-related state
+  const [audioId, setAudioId] = useState<string>("");
+  const [audioEmbedding, setAudioEmbedding] = useState<number[]>([]);
+  const [transcript, setTranscript] = useState<string>("");
+  const [brokenWords, setBrokenWords] = useState<string[]>([]);
+  const [diarization, setDiarization] = useState<any[]>([]);
+  const [retrievedLabel, setRetrievedLabel] = useState<string | null>(null);
 
   const { toast } = useToast();
 
@@ -77,12 +84,10 @@ export const ResultsPage = ({
         });
         const data = await res.json();
 
-        // NEW: set stats, imageId, embedding from backend
         setImageId(data.id);
         setEmbedding(data.embedding || []);
         setStats(data.stats || null);
 
-        // Adapt backend response into LabelSuggestion format
         const mapped =
           (data.suggestions || []).length > 0
             ? data.suggestions.map((s: any) => ({
@@ -108,6 +113,14 @@ export const ResultsPage = ({
           body: form,
         });
         const data = await res.json();
+
+        setAudioId(data.id);
+        setAudioEmbedding(data.audio_embedding || []);
+        setTranscript(data.transcript || "");
+        setBrokenWords(data.broken_words || []);
+        setDiarization(data.diarization || []);
+        setRetrievedLabel(data.retrieved_label || null);
+
         setSuggestions([
           {
             label: data.is_broken
@@ -148,16 +161,27 @@ export const ResultsPage = ({
   
     setIsProcessing(true);
   
-    // Call backend /confirm with real id + embedding
-    await fetch("http://localhost:8000/confirm", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        image_id: imageId || crypto.randomUUID(),
-        label: selectedLabel,
-        embedding,
-      }),
-    });
+    if (imageFile) {
+      await fetch("http://localhost:8000/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          image_id: imageId || crypto.randomUUID(),
+          label: selectedLabel,
+          embedding,
+        }),
+      });
+    } else if (audioBlob) {
+      await fetch("http://localhost:8000/confirm_audio", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          audio_id: audioId || crypto.randomUUID(),
+          label: selectedLabel,
+          embedding: audioEmbedding,
+        }),
+      });
+    }
   
     setIsProcessing(false);
   
@@ -166,7 +190,6 @@ export const ResultsPage = ({
       description: "Added to your dataset with embedding",
     });
   
-    // Pass up to parent if needed
     const metadata = {
       timestamp: new Date().toISOString(),
       filename: imageFile?.name || "audio_input",
@@ -252,18 +275,21 @@ export const ResultsPage = ({
                     Voice Instructions
                   </CardTitle>
                 </CardHeader>
-                <CardContent>
-                  <div className="bg-muted/30 rounded-lg p-4 text-center">
-                    <div className="w-12 h-12 bg-accent/20 rounded-full flex items-center justify-center mx-auto mb-3">
-                      🎵
-                    </div>
-                    <p className="text-sm text-muted-foreground">
-                      Audio transcription will be processed by speech-to-text
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-2">
-                      Duration: ~{Math.round((audioBlob.size / 8000))}s
-                    </p>
+                <CardContent className="space-y-4">
+                  <div className="bg-muted/30 rounded-lg p-4 text-sm space-y-2">
+                    <p><strong>Transcript:</strong> {transcript || "—"}</p>
+                    <p><strong>Broken Words:</strong> {brokenWords.length > 0 ? brokenWords.join(", ") : "—"}</p>
+                    <p><strong>Retrieved Label:</strong> {retrievedLabel || "—"}</p>
+                    <p><strong>Speakers:</strong> {diarization.map((d, i) => `S${d.speaker}[${d.start}-${d.end}]`).join(", ") || "—"}</p>
                   </div>
+                  <a
+                    href={`http://localhost:8000/audio/${audioId}/repair`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="bg-green-600 text-white px-4 py-2 rounded-lg inline-block"
+                  >
+                    Download Repaired Audio
+                  </a>
                 </CardContent>
               </Card>
             )}

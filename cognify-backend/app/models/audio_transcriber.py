@@ -33,7 +33,6 @@ def transcribe_with_conf(audio_path: str):
     text_parts: List[str] = []
 
     for seg in segments:
-        # segment text + confidence
         seg_probs = []
         if seg.words:
             for w in seg.words:
@@ -67,12 +66,11 @@ def detect_broken_words(words: List[Dict], prob_threshold: float = 0.55):
     broken_tokens = []
     for w in words:
         token = w["word"]
-        if not token or re.fullmatch(r"[\W_]+", token):  # punctuation-ish
+        if not token or re.fullmatch(r"[\W_]+", token):
             continue
         if w["prob"] < prob_threshold:
             broken_tokens.append(w)
 
-    # Dedup simple word list
     seen = set()
     broken_word_list = []
     for w in broken_tokens:
@@ -81,7 +79,6 @@ def detect_broken_words(words: List[Dict], prob_threshold: float = 0.55):
             seen.add(low)
             broken_word_list.append(w["word"])
 
-    # Merge to contiguous spans for visualization
     spans = merge_low_conf_spans(broken_tokens)
     return broken_word_list, spans
 
@@ -123,13 +120,26 @@ def summarize_transcript_simple(text: str, max_words: int = 24) -> str:
 
 # ---------- Utility ----------
 def get_audio_duration(path: str) -> float:
+    # 1. Try soundfile
     try:
         import soundfile as _sf
-        info = _sf.info(path)
-        return float(info.duration)
+        return float(_sf.info(path).duration)
     except Exception:
+        pass
+
+    # 2. Try librosa
+    try:
         y, sr = librosa.load(path, sr=None, mono=True)
         return float(len(y) / sr)
+    except Exception:
+        pass
+
+    # 3. Try pydub/ffmpeg
+    try:
+        from pydub.utils import mediainfo
+        return float(mediainfo(path)["duration"])
+    except Exception:
+        raise RuntimeError(f"Could not determine duration of audio file: {path}")
 
 
 # ---------- Simple "Repair": Noise Reduction + export ----------
@@ -139,15 +149,12 @@ def denoise_audio(input_path: str, out_path: str) -> Dict:
     Returns metadata with SNR estimate deltas.
     """
     y, sr = librosa.load(input_path, sr=None, mono=True)
-    # crude noise profile: first 0.5s (or less if shorter)
     head = y[: int(min(0.5, len(y)/sr) * sr)]
     reduced = nr.reduce_noise(y=y, sr=sr, y_noise=head, prop_decrease=0.9)
     sf.write(out_path, reduced, sr)
 
-    # naive SNR estimate (RMS)
     def snr(sig):
         rms = np.sqrt(np.mean(sig**2) + 1e-8)
-        # treat noise as difference from a smoothed version
         import scipy.signal as sps
         sm = sps.medfilt(sig, kernel_size=99)
         noise = sig - sm
@@ -155,7 +162,7 @@ def denoise_audio(input_path: str, out_path: str) -> Dict:
         return 20*np.log10(rms/nrms)
 
     try:
-        import scipy  # only for the crude SNR
+        import scipy
         before = snr(y)
         after = snr(reduced)
     except Exception:
@@ -168,7 +175,7 @@ def denoise_audio(input_path: str, out_path: str) -> Dict:
 def audio_embedding_mfcc(path: str, n_mfcc: int = 40) -> List[float]:
     y, sr = librosa.load(path, sr=None, mono=True)
     mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=n_mfcc)
-    vec = np.mean(mfcc, axis=1)  # (n_mfcc,)
+    vec = np.mean(mfcc, axis=1)
     return vec.astype(float).tolist()
 
 
@@ -179,7 +186,6 @@ def diarize_energy_fallback(path: str, top_db: float = 35.0, min_len: float = 0.
     splits by silence; returns [{start, end, speaker}]
     """
     y, sr = librosa.load(path, sr=None, mono=True)
-    # non-silent intervals (start, end) in samples
     intervals = librosa.effects.split(y, top_db=top_db)
     out = []
     for i, (s, e) in enumerate(intervals):
