@@ -15,7 +15,7 @@ export const LoadingScreen = ({ onComplete }: LoadingScreenProps) => {
       setProgress((prev) => {
         if (prev >= 100) {
           clearInterval(interval);
-          setIsComplete(true);
+          setIsComplete(true); // ✅ just mark complete, don't auto-navigate
           return 100;
         }
         return prev + 2;
@@ -101,7 +101,7 @@ export const LoadingScreen = ({ onComplete }: LoadingScreenProps) => {
         {isComplete && (
           <div className="animate-scale-in">
             <Button 
-              onClick={onComplete}
+              onClick={onComplete}   // ✅ user triggers navigation
               size="lg"
               className="bg-gradient-primary hover:shadow-glow transition-all duration-300 animate-pulse-glow"
             >
