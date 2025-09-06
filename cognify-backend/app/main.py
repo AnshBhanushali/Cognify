@@ -7,6 +7,7 @@ from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.schemas import ImageProcessResponse, AudioProcessResponse
+from app.models.image_embedder import save_label_to_chroma
 from app.models.image_embedder import image_to_embedding, generate_detailed_label
 from app.models.audio_transcriber import (
     transcribe_with_conf,
@@ -83,6 +84,13 @@ async def upload_image(file: UploadFile = File(...), include_embedding: bool = T
         suggestions=suggestions,
     )
 
+@app.post("/confirm")
+async def confirm(image_id: str, label: str, embedding: List[float]):
+    """
+    Save a user-confirmed label into ChromaDB so the system can remember it.
+    """
+    save_label_to_chroma(image_id, label, embedding)
+    return {"ok": True, "saved_label": label}
 
 # --------- Audio: upload -> transcript + broken detection ----------
 @app.post("/upload/audio", response_model=AudioProcessResponse)
@@ -115,6 +123,8 @@ async def upload_audio(file: UploadFile = File(...), summarize_if_clean: bool = 
     save_audio_record(
         uid, file.filename, ts, duration, transcript, avg_conf, is_broken, broken_words
     )
+
+    
 
     return AudioProcessResponse(
         id=uid,
