@@ -1,8 +1,8 @@
 import os
 import uuid
 import datetime
+import time
 from typing import List
-from pydantic import BaseModel
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,11 +23,6 @@ from app.models.audio_transcriber import (
 from app.db import save_image_record, save_audio_record
 import io
 import csv
-
-class ConfirmRequest(BaseModel):
-    image_id: str
-    label: str
-    embedding: List[float]
 
 # --------- paths ----------
 BASE_DIR = os.path.dirname(__file__)
@@ -63,17 +58,15 @@ def health():
     return {"status": "ok"}
 
 
-
-
 # --------- Image: upload -> embedding + label ----------
-@app.post("/upload/image", response_model=ImageProcessResponse)
+@app.post("/upload/image")
 async def upload_image(file: UploadFile = File(...), include_embedding: bool = True):
     if not file.filename:
         raise HTTPException(status_code=400, detail="No filename provided")
     if not (file.content_type or "").startswith("image/"):
         raise HTTPException(status_code=400, detail="Please upload an image file")
 
-    # Save
+    # Save image locally
     uid = str(uuid.uuid4())
     ext = os.path.splitext(file.filename)[1] or ".png"
     safe_name = f"{uid}{ext}"
@@ -81,30 +74,48 @@ async def upload_image(file: UploadFile = File(...), include_embedding: bool = T
     with open(dest_path, "wb") as f:
         f.write(await file.read())
 
-    # Embed + Predict label
-    embedding = image_to_embedding(dest_path)
-    predicted_label, suggestions = generate_detailed_label(dest_path, embedding)
     ts = _now_iso()
 
-    # Persist record (optional to your db layer)
+    # --- Measure embedding time ---
+    t0 = time.perf_counter()
+    embedding = image_to_embedding(dest_path)
+    t1 = time.perf_counter()
+    embedding_time = round(t1 - t0, 3)
+
+    # --- Measure Chroma search time ---
+    t2 = time.perf_counter()
+    predicted_label, suggestions = generate_detailed_label(dest_path, embedding)
+    t3 = time.perf_counter()
+    chroma_time = round(t3 - t2, 3)
+
+    # Persist record in db (optional)
     save_image_record(uid, file.filename, ts, embedding)
 
-    return ImageProcessResponse(
-        id=uid,
-        filename=file.filename,
-        timestamp=ts,
-        embedding_dim=len(embedding),
-        embedding=embedding if include_embedding else None,
-        predicted_label=predicted_label,
-        suggestions=suggestions,
-    )
+    # Pick top confidence if available
+    top_conf = suggestions[0]["score"] if suggestions else 1.0
+
+    return {
+        "id": uid,
+        "filename": file.filename,
+        "timestamp": ts,
+        "embedding_dim": len(embedding),
+        "embedding": embedding if include_embedding else None,
+        "predicted_label": predicted_label,
+        "suggestions": suggestions,
+        "stats": {
+            "embedding_time": embedding_time,
+            "chroma_time": chroma_time,
+            "similar_labels": len(suggestions),
+            "top_confidence": round(top_conf, 3),
+        },
+    }
 
 
 # --------- Image: confirm -> save to Chroma ----------
 @app.post("/confirm")
-async def confirm(req: ConfirmRequest):
-    save_label_to_chroma(req.image_id, req.label, req.embedding)
-    return {"ok": True, "saved_label": req.label}
+async def confirm(image_id: str, label: str, embedding: List[float]):
+    save_label_to_chroma(image_id, label, embedding)
+    return {"ok": True, "saved_label": label}
 
 
 # --------- Dataset: list saved labels ----------
