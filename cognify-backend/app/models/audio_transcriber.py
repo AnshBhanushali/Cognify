@@ -3,8 +3,6 @@ import re
 from typing import Dict, List, Tuple
 from faster_whisper import WhisperModel
 
-# Initialize a small, fast model; you can switch to "medium" later if needed.
-# device="cpu" for portability; set to "cuda" if you have a GPU
 _whisper = WhisperModel("small", device="cpu", compute_type="int8")
 
 def transcribe_with_conf(audio_path: str) -> Tuple[str, float, List[Tuple[str, float]], float]:
