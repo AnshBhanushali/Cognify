@@ -8,3 +8,9 @@ chromadb
 numpy
 faster-whisper
 pydantic
+faster-whisper
+librosa
+soundfile
+noisereduce
+chromadb
+numpy
