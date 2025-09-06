@@ -410,20 +410,36 @@ useEffect(() => {
                     <Check className="w-5 h-5 text-primary" />
                   </div>
                   <div className="flex gap-3 mt-6">
-                    <Button 
-                      onClick={handleSave}
-                      disabled={isProcessing}
-                      className="flex-1 bg-gradient-primary hover:shadow-glow transition-all duration-300"
-                    >
-                      {isProcessing ? (
-                        "Processing..."
-                      ) : (
-                        <>
-                          <Download className="w-4 h-4 mr-2" />
-                          Save to Dataset
-                        </>
-                      )}
-                    </Button>
+                  <div className="mt-6 flex gap-4 justify-end">
+  {/* Save Button */}
+  <button
+    onClick={handleSave}
+    className="bg-gradient-to-r from-purple-600 to-blue-500 text-white px-4 py-2 rounded-lg"
+  >
+    Save to Dataset
+  </button>
+
+  {/* Download JSON */}
+  <a
+    href="http://localhost:8000/dataset/download/json"
+    target="_blank"
+    rel="noopener noreferrer"
+    className="bg-blue-600 text-white px-4 py-2 rounded-lg"
+  >
+    Download JSON
+  </a>
+
+  {/* Download CSV */}
+  <a
+    href="http://localhost:8000/dataset/download/csv"
+    target="_blank"
+    rel="noopener noreferrer"
+    className="bg-green-600 text-white px-4 py-2 rounded-lg"
+  >
+    Download CSV
+  </a>
+</div>
+
                     <Button 
                       variant="outline"
                       onClick={() => setSelectedLabel("")}
