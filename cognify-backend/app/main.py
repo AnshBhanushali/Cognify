@@ -1,7 +1,7 @@
 import os
 import uuid
 import datetime
-from typing import Optional
+from typing import Optional, List
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,7 +13,6 @@ from app.models.audio_transcriber import (
     detect_broken_words,
     summarize_transcript_simple,
 )
-
 from app.db import save_image_record, save_audio_record
 
 # --------- paths ----------
@@ -25,7 +24,7 @@ os.makedirs(IMG_DIR, exist_ok=True)
 os.makedirs(AUD_DIR, exist_ok=True)
 
 # --------- app ----------
-app = FastAPI(title="CognifyAI Backend - Step 1")
+app = FastAPI(title="CognifyAI Backend")
 
 app.add_middleware(
     CORSMiddleware,
@@ -68,10 +67,10 @@ async def upload_image(file: UploadFile = File(...), include_embedding: bool = T
 
     # Embed + Predict label
     embedding = image_to_embedding(dest_path)
-    predicted_label = generate_detailed_label(dest_path)  # <- NEW
+    predicted_label, suggestions = generate_detailed_label(dest_path, embedding)
     ts = _now_iso()
 
-    # Persist minimal record for step 1
+    # Persist record
     save_image_record(uid, file.filename, ts, embedding)
 
     return ImageProcessResponse(
@@ -80,7 +79,8 @@ async def upload_image(file: UploadFile = File(...), include_embedding: bool = T
         timestamp=ts,
         embedding_dim=len(embedding),
         embedding=embedding if include_embedding else None,
-        predicted_label=predicted_label,  # <- NEW
+        predicted_label=predicted_label,
+        suggestions=suggestions,
     )
 
 
