@@ -121,29 +121,43 @@ useEffect(() => {
       });
       return;
     }
-
+  
     setIsProcessing(true);
-    
-    // Simulate processing
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    
-    const metadata = {
-      timestamp: new Date().toISOString(),
-      filename: imageFile?.name || 'audio_input',
-      confidence: suggestions.find(s => s.label === selectedLabel)?.confidence || 1.0,
-      notes: notes.trim(),
-      hasAudio: !!audioBlob,
-      hasImage: !!imageFile
-    };
-    
-    onSave(selectedLabel, metadata);
+  
+    // Find embedding from suggestions
+    const embedding = suggestions.find(s => s.embedding)?.embedding || [];
+  
+    // Call backend /confirm
+    await fetch("http://localhost:8000/confirm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        image_id: crypto.randomUUID(), // or use backend ID if returned
+        label: selectedLabel,
+        embedding,
+      }),
+    });
+  
     setIsProcessing(false);
-    
+  
     toast({
       title: "Label saved successfully",
       description: "Added to your dataset with embedding",
     });
+  
+    // Pass up to parent if needed
+    const metadata = {
+      timestamp: new Date().toISOString(),
+      filename: imageFile?.name || "audio_input",
+      confidence:
+        suggestions.find((s) => s.label === selectedLabel)?.confidence || 1.0,
+      notes: notes.trim(),
+      hasAudio: !!audioBlob,
+      hasImage: !!imageFile,
+    };
+    onSave(selectedLabel, metadata);
   };
+  
 
   const getSourceColor = (source: string) => {
     switch (source) {
