@@ -1,20 +1,27 @@
 import os
 import uuid
 import datetime
-from typing import Optional, List
+from typing import List
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.schemas import ImageProcessResponse, AudioProcessResponse
-from app.models.image_embedder import save_label_to_chroma
-from app.models.image_embedder import image_to_embedding, generate_detailed_label
+from app.models.image_embedder import (
+    image_to_embedding,
+    generate_detailed_label,
+    save_label_to_chroma,
+    collection,
+)
 from app.models.audio_transcriber import (
     transcribe_with_conf,
     detect_broken_words,
     summarize_transcript_simple,
 )
 from app.db import save_image_record, save_audio_record
+import io
+import csv
 
 # --------- paths ----------
 BASE_DIR = os.path.dirname(__file__)
@@ -71,7 +78,7 @@ async def upload_image(file: UploadFile = File(...), include_embedding: bool = T
     predicted_label, suggestions = generate_detailed_label(dest_path, embedding)
     ts = _now_iso()
 
-    # Persist record
+    # Persist record (optional to your db layer)
     save_image_record(uid, file.filename, ts, embedding)
 
     return ImageProcessResponse(
@@ -84,13 +91,60 @@ async def upload_image(file: UploadFile = File(...), include_embedding: bool = T
         suggestions=suggestions,
     )
 
+
+# --------- Image: confirm -> save to Chroma ----------
 @app.post("/confirm")
 async def confirm(image_id: str, label: str, embedding: List[float]):
-    """
-    Save a user-confirmed label into ChromaDB so the system can remember it.
-    """
     save_label_to_chroma(image_id, label, embedding)
     return {"ok": True, "saved_label": label}
+
+
+# --------- Dataset: list saved labels ----------
+@app.get("/dataset")
+async def list_dataset(limit: int = 50):
+    results = collection.get()
+    data = []
+    for i, doc in enumerate(results["documents"]):
+        data.append({
+            "id": results["ids"][i],
+            "label": doc,
+            "metadata": results["metadatas"][i],
+        })
+    return {"count": len(data), "items": data[:limit]}
+
+
+# --------- Dataset: download as JSON ----------
+@app.get("/dataset/download/json")
+async def download_dataset_json():
+    results = collection.get()
+    data = []
+    for i, doc in enumerate(results["documents"]):
+        data.append({
+            "id": results["ids"][i],
+            "label": doc,
+            "metadata": results["metadatas"][i],
+        })
+    return JSONResponse(content=data)
+
+
+# --------- Dataset: download as CSV ----------
+@app.get("/dataset/download/csv")
+async def download_dataset_csv():
+    results = collection.get()
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["id", "label", "metadata"])
+
+    for i, doc in enumerate(results["documents"]):
+        writer.writerow([results["ids"][i], doc, results["metadatas"][i]])
+
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=dataset.csv"},
+    )
+
 
 # --------- Audio: upload -> transcript + broken detection ----------
 @app.post("/upload/audio", response_model=AudioProcessResponse)
@@ -123,8 +177,6 @@ async def upload_audio(file: UploadFile = File(...), summarize_if_clean: bool = 
     save_audio_record(
         uid, file.filename, ts, duration, transcript, avg_conf, is_broken, broken_words
     )
-
-    
 
     return AudioProcessResponse(
         id=uid,
