@@ -72,6 +72,19 @@ export const ResultsPage = ({
       setSelectedLabel(suggestions[0].label);
     }
   }, [suggestions]);
+
+  // Local state for preview
+const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+useEffect(() => {
+  if (imageFile) {
+    const url = URL.createObjectURL(imageFile);
+    setPreviewUrl(url);
+
+    return () => URL.revokeObjectURL(url); // cleanup
+  }
+}, [imageFile]);
+
   
   useEffect(() => {
     const fetchSuggestions = async () => {
@@ -244,27 +257,29 @@ export const ResultsPage = ({
           {/* Input Preview */}
           <div className="space-y-6">
             {/* Image Preview */}
-            {imagePreview && (
-              <Card className="bg-gradient-card border-border/50 backdrop-blur-sm animate-scale-in">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Target className="w-5 h-5 text-primary" />
-                    Uploaded Image
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <img 
-                    src={imagePreview} 
-                    alt="Uploaded content" 
-                    className="w-full h-64 object-contain rounded-lg bg-muted/20"
-                  />
-                  <div className="mt-4 text-sm text-muted-foreground">
-                    <p>Filename: {imageFile?.name}</p>
-                    <p>Size: {((imageFile?.size || 0) / 1024).toFixed(1)} KB</p>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
+            {/* Image Preview */}
+{previewUrl && (
+  <Card className="bg-gradient-card border-border/50 backdrop-blur-sm animate-scale-in">
+    <CardHeader>
+      <CardTitle className="flex items-center gap-2">
+        <Target className="w-5 h-5 text-primary" />
+        Uploaded Image
+      </CardTitle>
+    </CardHeader>
+    <CardContent>
+      <img 
+        src={previewUrl} 
+        alt="Uploaded content" 
+        className="w-full h-64 object-contain rounded-lg bg-muted/20"
+      />
+      <div className="mt-4 text-sm text-muted-foreground">
+        <p>Filename: {imageFile?.name}</p>
+        <p>Size: {((imageFile?.size || 0) / 1024).toFixed(1)} KB</p>
+      </div>
+    </CardContent>
+  </Card>
+)}
+
 
             {/* Audio Input */}
             {audioBlob && (
