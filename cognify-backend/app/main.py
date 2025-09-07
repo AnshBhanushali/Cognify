@@ -2,12 +2,17 @@ import os
 import uuid
 import datetime
 import time
+import io
+import csv
 from typing import List
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from pydantic import BaseModel
+
+import numpy as np
+from sklearn.neighbors import KNeighborsClassifier
 
 from app.schemas import ImageProcessResponse, AudioProcessResponse
 from app.models.image_embedder import (
@@ -26,8 +31,6 @@ from app.models.audio_transcriber import (
 )
 from app.models.audio_memory import save_audio_label_to_chroma, query_audio_label
 from app.db import save_image_record, save_audio_record
-import io
-import csv
 
 # --------- paths ----------
 BASE_DIR = os.path.dirname(__file__)
@@ -61,6 +64,21 @@ def _now_iso() -> str:
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+# --------- Global ML state (Sprint 2) ----------
+X_train: List[np.ndarray] = []
+y_train: List[str] = []
+knn_model: KNeighborsClassifier | None = None
+
+
+def retrain_knn():
+    global knn_model
+    if not X_train:
+        return None
+    knn_model = KNeighborsClassifier(n_neighbors=3)
+    knn_model.fit(X_train, y_train)
+    return knn_model
 
 
 # --------- Image: upload -> embedding + label ----------
@@ -114,6 +132,12 @@ async def upload_image(file: UploadFile = File(...), include_embedding: bool = T
 @app.post("/confirm")
 async def confirm(image_id: str, label: str, embedding: List[float]):
     save_label_to_chroma(image_id, label, embedding)
+
+    # also update KNN dataset
+    X_train.append(np.array(embedding))
+    y_train.append(label)
+    retrain_knn()
+
     return {"ok": True, "saved_label": label}
 
 
@@ -235,6 +259,12 @@ class ConfirmAudioReq(BaseModel):
 @app.post("/confirm_audio")
 async def confirm_audio(req: ConfirmAudioReq):
     save_audio_label_to_chroma(req.audio_id, req.label, req.embedding)
+
+    # also update classifier
+    X_train.append(np.array(req.embedding))
+    y_train.append(req.label)
+    retrain_knn()
+
     return {"ok": True, "saved_label": req.label}
 
 
@@ -255,3 +285,30 @@ async def repair_audio(audio_id: str):
         "X-SNR-After": str(round(meta.get("snr_after", 0.0), 2)),
     }
     return FileResponse(out_path, media_type="audio/wav", filename=out_name, headers=headers)
+
+
+# --------- Sprint 2: Classifier Endpoints ----------
+@app.post("/predict")
+async def predict(embedding: List[float]):
+    if not knn_model:
+        return {"label": None, "confidence": 0}
+    emb = np.array(embedding).reshape(1, -1)
+    pred = knn_model.predict(emb)[0]
+    if hasattr(knn_model, "predict_proba"):
+        conf = float(np.max(knn_model.predict_proba(emb)))
+    else:
+        conf = 1.0
+    return {"label": pred, "confidence": conf}
+
+
+@app.post("/retrain")
+async def retrain():
+    if not X_train:
+        return {"status": "no data"}
+    retrain_knn()
+    return {"status": "retrained", "samples": len(X_train)}
+
+
+@app.get("/embeddings/all")
+async def get_embeddings():
+    return {"X": [x.tolist() for x in X_train], "y": y_train}
