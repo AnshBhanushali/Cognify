@@ -18,3 +18,4 @@ openai
 pydantic
 python-dotenv
 uvicorn[standard]
+gunicorn
