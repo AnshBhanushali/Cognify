@@ -25,7 +25,7 @@ export default function DatasetPage() {
   };
 
   // --- retrain endpoint ---
-  const handleRetrain = async () => {
+  /*const handleRetrain = async () => {
     try {
       const res = await fetch("http://localhost:8000/retrain", { method: "POST" });
       const data = await res.json();
@@ -34,7 +34,14 @@ export default function DatasetPage() {
       console.error("Retrain failed", err);
       alert("Failed to retrain model");
     }
-  };
+  };*/
+
+  const retrainModel = async () => {
+    const res = await fetch("http://localhost:8000/retrain", { method: "POST" });
+    const data = await res.json();
+    console.log("Retrain:", data);
+  }; 
+  
 
   // --- fetch embeddings ---
   const fetchEmbeddings = async () => {
@@ -59,7 +66,7 @@ export default function DatasetPage() {
       {/* Actions */}
       <div className="flex gap-4 mb-6">
         <Button onClick={fetchDataset}>Refresh Dataset</Button>
-        <Button onClick={handleRetrain} className="bg-purple-500 text-white">
+        <Button onClick={retrainModel} className="bg-purple-500 text-white">
           Retrain Model
         </Button>
         <a

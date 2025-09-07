@@ -193,6 +193,16 @@ const handlePredict = async () => {
   }
 };
 
+const runPrediction = async () => {
+  const payload = { embedding };
+  const res = await fetch("http://localhost:8000/predict", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  console.log("Predicted:", data);
+};
 
 
   const handleAcceptSuggestion = (label: string) => {
