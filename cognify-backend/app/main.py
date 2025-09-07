@@ -52,18 +52,25 @@ os.makedirs(AUD_DIR, exist_ok=True)
 # --------- app ----------
 app = FastAPI(title="CognifyAI Backend")
 
+from fastapi.middleware.cors import CORSMiddleware
+
+origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
+    "https://cognify.vercel.app", 
+    "https://cognify-1.onrender.com", 
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:8080",
-        "http://127.0.0.1:8080",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 
 def _now_iso() -> str:
