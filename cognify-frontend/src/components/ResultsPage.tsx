@@ -19,8 +19,9 @@ import { useToast } from "@/hooks/use-toast";
 interface LabelSuggestion {
   label: string;
   confidence: number;
-  source: 'chromadb' | 'clip' | 'gpt4v';
+  source: 'chromadb' | 'clip' | 'gpt4v' | 'openai';
   embedding?: number[];
+  hierarchy?: string[];
 }
 
 interface ResultsPageProps {
@@ -279,18 +280,22 @@ const runPrediction = async () => {
       case 'chromadb': return 'bg-primary/20 text-primary';
       case 'clip': return 'bg-accent/20 text-accent';
       case 'gpt4v': return 'bg-purple-500/20 text-purple-400';
+      case 'openai': return 'bg-blue-500/20 text-blue-400';  
       default: return 'bg-muted/20 text-muted-foreground';
     }
   };
+  
 
   const getSourceIcon = (source: string) => {
     switch (source) {
       case 'chromadb': return '🗄️';
       case 'clip': return '🧠';
       case 'gpt4v': return '🤖';
+      case 'openai': return '✨'; 
       default: return '📊';
     }
   };
+  
   
 
   return (
@@ -408,40 +413,48 @@ const runPrediction = async () => {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                {suggestions.map((suggestion, index) => (
-                  <div
-                    key={index}
-                    className={`p-4 rounded-lg border transition-all duration-300 cursor-pointer ${
-                      selectedLabel === suggestion.label
-                        ? 'border-primary bg-primary/10'
-                        : 'border-border hover:border-primary/50'
-                    }`}
-                    onClick={() => handleAcceptSuggestion(suggestion.label)}
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="font-medium">{suggestion.label}</span>
-                      <div className="flex items-center gap-2">
-                        <Badge variant="outline" className={getSourceColor(suggestion.source)}>
-                          {getSourceIcon(suggestion.source)} {suggestion.source.toUpperCase()}
-                        </Badge>
-                        {selectedLabel === suggestion.label && (
-                          <Check className="w-4 h-4 text-primary" />
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <div className="flex-1 bg-muted/30 rounded-full h-2 mr-3">
-                        <div 
-                          className="bg-gradient-primary h-2 rounded-full transition-all duration-500"
-                          style={{ width: `${suggestion.confidence * 100}%` }}
-                        />
-                      </div>
-                      <span className="text-sm text-muted-foreground">
-                        {(suggestion.confidence * 100).toFixed(0)}%
-                      </span>
+              {suggestions.map((suggestion, index) => (
+                <div
+                  key={index}
+                  className={`p-4 rounded-lg border transition-all duration-300 cursor-pointer ${
+                    selectedLabel === suggestion.label
+                      ? 'border-primary bg-primary/10'
+                      : 'border-border hover:border-primary/50'
+                  }`}
+                  onClick={() => handleAcceptSuggestion(suggestion.label)}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-medium">{suggestion.label}</span>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline" className={getSourceColor(suggestion.source)}>
+                        {getSourceIcon(suggestion.source)} {suggestion.source.toUpperCase()}
+                      </Badge>
+                      {selectedLabel === suggestion.label && (
+                        <Check className="w-4 h-4 text-primary" />
+                      )}
                     </div>
                   </div>
-                ))}
+
+                  
+                  {suggestion.hierarchy && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {suggestion.hierarchy.join(" → ")}
+                    </p>
+                  )}
+
+                  <div className="flex items-center justify-between mt-2">
+                    <div className="flex-1 bg-muted/30 rounded-full h-2 mr-3">
+                      <div
+                        className="bg-gradient-primary h-2 rounded-full transition-all duration-500"
+                        style={{ width: `${suggestion.confidence * 100}%` }}
+                      />
+                    </div>
+                    <span className="text-sm text-muted-foreground">
+                      {(suggestion.confidence * 100).toFixed(0)}%
+                    </span>
+                  </div>
+                </div>
+              ))}
               </CardContent>
             </Card>
 
@@ -468,14 +481,14 @@ const runPrediction = async () => {
       </p>
     )}
 
-    <Button
-      onClick={handlePredict}
-      className="bg-gradient-primary hover:shadow-glow transition-all duration-300"
-    >
-      Run Prediction →
-    </Button>
-  </CardContent>
-</Card>
+            <Button
+                onClick={handlePredict}
+                className="bg-gradient-primary hover:shadow-glow transition-all duration-300"
+              >
+                Run Prediction →
+              </Button>
+            </CardContent>
+          </Card>
 
 
             {/* Custom Label */}

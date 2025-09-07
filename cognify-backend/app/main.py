@@ -4,7 +4,7 @@ import datetime
 import time
 import io
 import csv
-from typing import List
+from typing import List, Optional
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,7 +14,16 @@ from pydantic import BaseModel
 import numpy as np
 from sklearn.neighbors import KNeighborsClassifier
 
-from app.schemas import ImageProcessResponse, AudioProcessResponse
+from dotenv import load_dotenv
+from openai import OpenAI
+
+# --------- load environment ----------
+load_dotenv()
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+HF_TOKEN = os.getenv("HF_TOKEN")  # optional for Hugging Face
+client = OpenAI(api_key=OPENAI_API_KEY)
+
+# --------- local imports ----------
 from app.models.image_embedder import (
     image_to_embedding,
     generate_detailed_label,
@@ -69,7 +78,7 @@ def health():
 # --------- Global ML state (Sprint 2) ----------
 X_train: List[np.ndarray] = []
 y_train: List[str] = []
-knn_model: KNeighborsClassifier | None = None
+knn_model: Optional[KNeighborsClassifier] = None
 
 
 def retrain_knn():
@@ -79,6 +88,32 @@ def retrain_knn():
     knn_model = KNeighborsClassifier(n_neighbors=3)
     knn_model.fit(X_train, y_train)
     return knn_model
+
+
+# --------- LLM Hierarchy Suggestion ----------
+def suggest_hierarchy(label: str) -> dict:
+    """
+    Uses OpenAI GPT to expand a flat label into a hierarchy.
+    Example: "Civic" -> {"root": "Car", "make": "Honda", "model": "Civic"}
+    """
+    if not OPENAI_API_KEY:
+        return {"error": "Missing OPENAI_API_KEY in .env"}
+
+    try:
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are an AI that classifies labels into hierarchies."},
+                {"role": "user", "content": f"Organize the label '{label}' into a hierarchy. "
+                                             "Return JSON with fields like root, category, subcategory, etc. "
+                                             "Be generic so it works for animals, vehicles, objects, etc."}
+            ],
+            response_format={"type": "json_object"},
+            max_tokens=200,
+        )
+        return resp.choices[0].message.parsed
+    except Exception as e:
+        return {"error": str(e)}
 
 
 # --------- Image: upload -> embedding + label ----------
@@ -93,23 +128,35 @@ async def upload_image(file: UploadFile = File(...), include_embedding: bool = T
     ext = os.path.splitext(file.filename)[1] or ".png"
     safe_name = f"{uid}{ext}"
     dest_path = os.path.join(IMG_DIR, safe_name)
+
     with open(dest_path, "wb") as f:
         f.write(await file.read())
 
     ts = _now_iso()
 
-    # timings
-    t0 = time.perf_counter()
+    # embeddings + label
     embedding = image_to_embedding(dest_path)
-    embedding_time = round(time.perf_counter() - t0, 3)
-
-    t1 = time.perf_counter()
     predicted_label, suggestions = generate_detailed_label(dest_path, embedding)
-    chroma_time = round(time.perf_counter() - t1, 3)
 
-    save_image_record(uid, file.filename, ts, embedding)
-
-    top_conf = suggestions[0]["score"] if suggestions else 1.0
+    # 🔹 Add OpenAI LLM classification
+    try:
+        llm_resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are an expert image classification assistant."},
+                {"role": "user", "content": f"Provide a short, single label for this image: {file.filename}. "
+                                             f"The CLIP embedding suggested: {predicted_label}."}
+            ],
+            max_tokens=20
+        )
+        llm_label = llm_resp.choices[0].message.content.strip()
+        suggestions.append({
+            "label": llm_label,
+            "score": 0.95,
+            "source": "openai"
+        })
+    except Exception as e:
+        print("OpenAI failed:", e)
 
     return {
         "id": uid,
@@ -119,13 +166,8 @@ async def upload_image(file: UploadFile = File(...), include_embedding: bool = T
         "embedding": embedding if include_embedding else None,
         "predicted_label": predicted_label,
         "suggestions": suggestions,
-        "stats": {
-            "embedding_time": embedding_time,
-            "chroma_time": chroma_time,
-            "similar_labels": len(suggestions),
-            "top_confidence": round(top_conf, 3),
-        },
     }
+
 
 
 # --------- Image: confirm ----------
@@ -138,7 +180,10 @@ async def confirm(image_id: str, label: str, embedding: List[float]):
     y_train.append(label)
     retrain_knn()
 
-    return {"ok": True, "saved_label": label}
+    # also call LLM for hierarchy
+    hierarchy = suggest_hierarchy(label)
+
+    return {"ok": True, "saved_label": label, "hierarchy": hierarchy}
 
 
 # --------- Dataset: list ----------
@@ -265,7 +310,10 @@ async def confirm_audio(req: ConfirmAudioReq):
     y_train.append(req.label)
     retrain_knn()
 
-    return {"ok": True, "saved_label": req.label}
+    # also call LLM for hierarchy
+    hierarchy = suggest_hierarchy(req.label)
+
+    return {"ok": True, "saved_label": req.label, "hierarchy": hierarchy}
 
 
 # --------- Audio: repair (denoise) ----------
@@ -301,7 +349,6 @@ async def predict(req: PredictReq):
     return {"label": pred, "confidence": conf}
 
 
-
 @app.post("/retrain")
 async def retrain():
     if not X_train:
@@ -313,3 +360,9 @@ async def retrain():
 @app.get("/embeddings/all")
 async def get_embeddings():
     return {"X": [x.tolist() for x in X_train], "y": y_train}
+
+
+# --------- Standalone hierarchy endpoint ----------
+@app.post("/hierarchy")
+async def hierarchy(label: str):
+    return suggest_hierarchy(label)
