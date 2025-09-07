@@ -14,3 +14,7 @@ soundfile
 noisereduce
 chromadb
 numpy
+openai
+pydantic
+python-dotenv
+uvicorn[standard]
