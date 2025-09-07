@@ -135,4 +135,4 @@ Frontend runs on: `http://localhost:5173`
 
 ## 📜 License
 
-MIT License – free to use, modify, and distribute.
+Apache License – free to use, modify, and distribute.
