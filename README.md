@@ -119,31 +119,6 @@ Frontend runs on: `http://localhost:5173`
 
 ---
 
-## 🚀 Roadmap
-
-### ✅ Sprint 1 – Core Foundations
-
-* Upload (Image/Audio)
-* CLIP embeddings + Whisper transcription
-* Dataset save/download
-
-### ✅ Sprint 2 – Feedback & Training
-
-* k-NN classifier (scikit-learn)
-* Retraining button
-* Embedding visualization
-
-### 🔜 Sprint 3 – Enhancements
-
-* Active Learning loop (uncertain samples)
-* Bulk/Semi-Automatic labeling
-* Hierarchical Labels (Car → Honda → Civic)
-* Confidence Heatmap (UMAP/t-SNE)
-* Region-based labeling (SAM, Segment Anything)
-* Text-Prompt Search ("find all images like a dog")
-
----
-
 ## 🌐 Deployment
 
 * **Backend** → Render (FastAPI)
