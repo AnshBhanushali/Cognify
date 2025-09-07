@@ -288,17 +288,18 @@ async def repair_audio(audio_id: str):
 
 
 # --------- Sprint 2: Classifier Endpoints ----------
+class PredictReq(BaseModel):
+    embedding: List[float]
+
 @app.post("/predict")
-async def predict(embedding: List[float]):
+async def predict(req: PredictReq):
     if not knn_model:
         return {"label": None, "confidence": 0}
-    emb = np.array(embedding).reshape(1, -1)
+    emb = np.array(req.embedding).reshape(1, -1)
     pred = knn_model.predict(emb)[0]
-    if hasattr(knn_model, "predict_proba"):
-        conf = float(np.max(knn_model.predict_proba(emb)))
-    else:
-        conf = 1.0
+    conf = float(np.max(knn_model.predict_proba(emb)))
     return {"label": pred, "confidence": conf}
+
 
 
 @app.post("/retrain")

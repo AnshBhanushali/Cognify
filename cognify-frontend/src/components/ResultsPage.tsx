@@ -44,6 +44,9 @@ export const ResultsPage = ({
   const [customLabel, setCustomLabel] = useState("");
   const [notes, setNotes] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
+  const [predictedLabel, setPredictedLabel] = useState<string | null>(null);
+  const [predConfidence, setPredConfidence] = useState<number | null>(null);
+
 
   // Stats + IDs + embeddings
   type Stats = {
@@ -154,6 +157,43 @@ useEffect(() => {
   fetchSuggestions();
 }, [imageFile, audioBlob]);
 
+const handlePredict = async () => {
+  try {
+    let payload: any = {};
+
+    if (imageFile) {
+      payload = { embedding };
+    } else if (audioBlob) {
+      payload = { embedding: audioEmbedding };
+    }
+
+    const res = await fetch("http://localhost:8000/predict", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await res.json();
+    setPredictedLabel(data.predicted_label || "unknown");
+    setPredConfidence(data.confidence || null);
+
+    toast({
+      title: "Prediction complete",
+      description: `Model suggests: ${data.predicted_label} (${Math.round(
+        (data.confidence || 0) * 100
+      )}%)`,
+    });
+  } catch (err) {
+    console.error("Prediction failed", err);
+    toast({
+      title: "Prediction failed",
+      description: "Check backend logs.",
+      variant: "destructive",
+    });
+  }
+};
+
+
 
   const handleAcceptSuggestion = (label: string) => {
     setSelectedLabel(label);
@@ -177,6 +217,8 @@ useEffect(() => {
       });
       return;
     }
+
+    
   
     setIsProcessing(true);
   
@@ -392,6 +434,39 @@ useEffect(() => {
                 ))}
               </CardContent>
             </Card>
+
+            {/* Model Prediction */}
+<Card className="bg-gradient-card border-border/50 backdrop-blur-sm animate-scale-in">
+  <CardHeader>
+    <CardTitle className="flex items-center gap-2">
+      🤖 Model Prediction
+    </CardTitle>
+  </CardHeader>
+  <CardContent className="space-y-4">
+    {predictedLabel ? (
+      <div className="p-4 bg-primary/10 rounded-lg border border-primary/20">
+        <p className="text-lg font-semibold">{predictedLabel}</p>
+        {predConfidence !== null && (
+          <p className="text-sm text-muted-foreground">
+            Confidence: {(predConfidence * 100).toFixed(1)}%
+          </p>
+        )}
+      </div>
+    ) : (
+      <p className="text-sm text-muted-foreground">
+        No prediction yet. Run the model to get a prediction.
+      </p>
+    )}
+
+    <Button
+      onClick={handlePredict}
+      className="bg-gradient-primary hover:shadow-glow transition-all duration-300"
+    >
+      Run Prediction →
+    </Button>
+  </CardContent>
+</Card>
+
 
             {/* Custom Label */}
             <Card className="bg-gradient-card border-border/50 backdrop-blur-sm animate-scale-in">
