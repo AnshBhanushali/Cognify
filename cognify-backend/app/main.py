@@ -124,40 +124,66 @@ async def upload_image(file: UploadFile = File(...), include_embedding: bool = T
     if not (file.content_type or "").startswith("image/"):
         raise HTTPException(status_code=400, detail="Please upload an image file")
 
+    # save file
     uid = str(uuid.uuid4())
     ext = os.path.splitext(file.filename)[1] or ".png"
     safe_name = f"{uid}{ext}"
     dest_path = os.path.join(IMG_DIR, safe_name)
-
     with open(dest_path, "wb") as f:
         f.write(await file.read())
 
     ts = _now_iso()
 
-    # embeddings + label
+    # --- Step 1: Embedding ---
+    t0 = time.perf_counter()
     embedding = image_to_embedding(dest_path)
+    embedding_time = round(time.perf_counter() - t0, 3)
+
+    # --- Step 2: ChromaDB search ---
+    t1 = time.perf_counter()
     predicted_label, suggestions = generate_detailed_label(dest_path, embedding)
+    chroma_time = round(time.perf_counter() - t1, 3)
 
-    # 🔹 Add OpenAI LLM classification
-    try:
-        llm_resp = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "You are an expert image classification assistant."},
-                {"role": "user", "content": f"Provide a short, single label for this image: {file.filename}. "
-                                             f"The CLIP embedding suggested: {predicted_label}."}
-            ],
-            max_tokens=20
-        )
-        llm_label = llm_resp.choices[0].message.content.strip()
-        suggestions.append({
-            "label": llm_label,
-            "score": 0.95,
-            "source": "openai"
-        })
-    except Exception as e:
-        print("OpenAI failed:", e)
+    top_conf = suggestions[0]["score"] if suggestions else 0.0
 
+    # --- Step 3: OpenAI fallback if confidence is weak ---
+    llm_label = None
+    hierarchy = None
+    if top_conf < 0.7:  # threshold can be tuned
+        try:
+            llm_resp = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are an expert classifier. Expand generic labels into more specific hierarchies."},
+                    {"role": "user", "content": f"The CLIP embedding suggests '{predicted_label}'. "
+                                                 "Refine it to be more specific. Example: 'Car → Honda → Civic'. "
+                                                 "If it's an object or animal, give the most detailed classification you can. "
+                                                 "Return JSON with fields like root, category, subcategory, etc."}
+                ],
+                response_format={"type": "json_object"},
+                max_tokens=200,
+            )
+            parsed = llm_resp.choices[0].message.parsed
+            if isinstance(parsed, dict) and "root" in parsed:
+                hierarchy = parsed
+                llm_label = " → ".join(parsed.values())
+            else:
+                llm_label = llm_resp.choices[0].message.content.strip()
+        except Exception as e:
+            print("OpenAI failed:", e)
+
+        if llm_label:
+            suggestions.append({
+                "label": llm_label,
+                "score": 0.8,
+                "source": "openai",
+                "hierarchy": hierarchy
+            })
+
+    # --- Step 4: Save record ---
+    save_image_record(uid, file.filename, ts, embedding)
+
+    # --- Step 5: Return response ---
     return {
         "id": uid,
         "filename": file.filename,
@@ -166,8 +192,13 @@ async def upload_image(file: UploadFile = File(...), include_embedding: bool = T
         "embedding": embedding if include_embedding else None,
         "predicted_label": predicted_label,
         "suggestions": suggestions,
+        "stats": {
+            "embedding_time": embedding_time,
+            "chroma_time": chroma_time,
+            "similar_labels": len(suggestions),
+            "top_confidence": round(top_conf, 3),
+        },
     }
-
 
 
 # --------- Image: confirm ----------
