@@ -124,7 +124,7 @@ async def upload_image(file: UploadFile = File(...), include_embedding: bool = T
     if not (file.content_type or "").startswith("image/"):
         raise HTTPException(status_code=400, detail="Please upload an image file")
 
-    # save file
+    # ---- Save uploaded file ----
     uid = str(uuid.uuid4())
     ext = os.path.splitext(file.filename)[1] or ".png"
     safe_name = f"{uid}{ext}"
@@ -134,56 +134,73 @@ async def upload_image(file: UploadFile = File(...), include_embedding: bool = T
 
     ts = _now_iso()
 
-    # --- Step 1: Embedding ---
+    # ---- Step 1: CLIP embedding ----
     t0 = time.perf_counter()
     embedding = image_to_embedding(dest_path)
     embedding_time = round(time.perf_counter() - t0, 3)
 
-    # --- Step 2: ChromaDB search ---
+    # CLIP baseline label
+    predicted_label, clip_suggestions = generate_detailed_label(dest_path, embedding)
+
+    # ---- Step 2: ChromaDB retrieval ----
     t1 = time.perf_counter()
-    predicted_label, suggestions = generate_detailed_label(dest_path, embedding)
+    chroma_results = collection.query(
+        query_embeddings=[embedding],
+        n_results=3
+    )
     chroma_time = round(time.perf_counter() - t1, 3)
 
-    top_conf = suggestions[0]["score"] if suggestions else 0.0
+    chroma_suggestions = []
+    if chroma_results and chroma_results.get("documents"):
+        for i, doc in enumerate(chroma_results["documents"][0]):
+            chroma_suggestions.append({
+                "label": doc,
+                "score": float(chroma_results["distances"][0][i]) if chroma_results.get("distances") else 0.0,
+                "source": "chromadb"
+            })
 
-    # --- Step 3: OpenAI fallback if confidence is weak ---
+    # Merge CLIP + Chroma
+    suggestions = []
+    if clip_suggestions:
+        suggestions.extend([{"label": s["label"], "score": s.get("score", 0.8), "source": "clip"} for s in clip_suggestions])
+    if chroma_suggestions:
+        suggestions.extend(chroma_suggestions)
+
+    # ---- Step 3: OpenAI fallback if low confidence or too generic ----
     llm_label = None
-    hierarchy = None
-    if top_conf < 0.7:  # threshold can be tuned
+    if not chroma_suggestions or (chroma_suggestions[0]["score"] < 0.4):
         try:
             llm_resp = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-4o-mini",  # multimodal
                 messages=[
-                    {"role": "system", "content": "You are an expert classifier. Expand generic labels into more specific hierarchies."},
-                    {"role": "user", "content": f"The CLIP embedding suggests '{predicted_label}'. "
-                                                 "Refine it to be more specific. Example: 'Car → Honda → Civic'. "
-                                                 "If it's an object or animal, give the most detailed classification you can. "
-                                                 "Return JSON with fields like root, category, subcategory, etc."}
+                    {"role": "system", "content": "You are an expert image classifier. Always return a detailed hierarchy like 'Car → Honda → Civic'."},
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": f"Classify this image in a detailed hierarchy. "
+                                                     f"CLIP thinks it is '{predicted_label}'. "
+                                                     f"ChromaDB suggestions: {[s['label'] for s in chroma_suggestions]}."},
+                            {"type": "image_url", "image_url": {"url": f"file://{dest_path}"}}
+                        ]
+                    }
                 ],
-                response_format={"type": "json_object"},
-                max_tokens=200,
+                max_tokens=100
             )
-            parsed = llm_resp.choices[0].message.parsed
-            if isinstance(parsed, dict) and "root" in parsed:
-                hierarchy = parsed
-                llm_label = " → ".join(parsed.values())
-            else:
-                llm_label = llm_resp.choices[0].message.content.strip()
+            llm_label = llm_resp.choices[0].message.content.strip()
+            suggestions.append({
+                "label": llm_label,
+                "score": 0.9,
+                "source": "openai"
+            })
         except Exception as e:
             print("OpenAI failed:", e)
 
-        if llm_label:
-            suggestions.append({
-                "label": llm_label,
-                "score": 0.8,
-                "source": "openai",
-                "hierarchy": hierarchy
-            })
-
-    # --- Step 4: Save record ---
+    # ---- Save image + embedding ----
     save_image_record(uid, file.filename, ts, embedding)
 
-    # --- Step 5: Return response ---
+    # Confidence calculation
+    top_conf = max([s["score"] for s in suggestions], default=0.5)
+
     return {
         "id": uid,
         "filename": file.filename,
@@ -195,10 +212,11 @@ async def upload_image(file: UploadFile = File(...), include_embedding: bool = T
         "stats": {
             "embedding_time": embedding_time,
             "chroma_time": chroma_time,
-            "similar_labels": len(suggestions),
+            "similar_labels": len(chroma_suggestions),
             "top_confidence": round(top_conf, 3),
         },
     }
+
 
 
 # --------- Image: confirm ----------
